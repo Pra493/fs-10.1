@@ -1,0 +1,117 @@
+# === BACKEND ===
+# backend/server.js
+const express = require('express');
+const mongoose = require('mongoose');
+const cors = require('cors');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
+require('dotenv').config();
+const app = express();
+app.use(express.json());
+app.use(cors());
+mongoose.connect(process.env.MONGO_URI);
+const User = mongoose.model('User', new mongoose.Schema({ username: String, email: String, password: String }));
+const Post = mongoose.model('Post', new mongoose.Schema({
+  text: String, image: String, likes: [String],
+  author: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  comments: [{ user: String, text: String }]
+}));
+app.post('/register', async (req, res) => {
+  const hashed = await bcrypt.hash(req.body.password, 10);
+  const user = await User.create({ ...req.body, password: hashed });
+  res.json(user);
+});
+app.post('/login', async (req, res) => {
+  const user = await User.findOne({ email: req.body.email });
+  if (!user || !(await bcrypt.compare(req.body.password, user.password))) return res.status(400).json({ msg: 'Invalid' });
+  const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET);
+  res.json({ token, user });
+});
+app.get('/posts', async (req, res) => res.json(await Post.find().populate('author')));
+app.post('/posts', async (req, res) => {
+  const user = jwt.verify(req.headers.authorization, process.env.JWT_SECRET);
+  const post = await Post.create({ ...req.body, author: user.id });
+  res.json(post);
+});
+app.put('/posts/:id/like', async (req, res) => {
+  const user = jwt.verify(req.headers.authorization, process.env.JWT_SECRET);
+  const post = await Post.findById(req.params.id);
+  post.likes.includes(user.id)
+    ? post.likes = post.likes.filter(u => u !== user.id)
+    : post.likes.push(user.id);
+  await post.save();
+  res.json(post);
+});
+app.post('/posts/:id/comment', async (req, res) => {
+  const user = jwt.verify(req.headers.authorization, process.env.JWT_SECRET);
+  const post = await Post.findById(req.params.id);
+  post.comments.push({ user: user.id, text: req.body.text });
+  await post.save();
+  res.json(post);
+});
+app.listen(5000, () => console.log("Server running"));
+
+# .env
+MONGO_URI=mongodb+srv://<your_mongo_connection>
+JWT_SECRET=secretkey
+
+# === FRONTEND ===
+# frontend/src/index.js
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import App from './App';
+import './index.css';
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+
+# frontend/src/App.js
+import React, { useState, useEffect } from 'react';
+import axios from 'axios';
+function App() {
+  const [user, setUser] = useState(null);
+  const [email, setEmail] = useState(''); const [password, setPassword] = useState('');
+  const [posts, setPosts] = useState([]); const [text, setText] = useState('');
+  const fetchPosts = async () => setPosts((await axios.get('http://localhost:5000/posts')).data);
+  useEffect(() => { fetchPosts(); }, []);
+  const login = async () => {
+    const res = await axios.post('http://localhost:5000/login', { email, password });
+    setUser(res.data);
+  };
+  const createPost = async () => {
+    await axios.post('http://localhost:5000/posts', { text }, { headers: { Authorization: user.token } });
+    fetchPosts();
+  };
+  const likePost = async id => {
+    await axios.put(`http://localhost:5000/posts/${id}/like`, {}, { headers: { Authorization: user.token } });
+    fetchPosts();
+  };
+  return (
+    <div style={{ padding: 20 }}>
+      {!user ? (
+        <div>
+          <h2>Login</h2>
+          <input placeholder="Email" onChange={e => setEmail(e.target.value)} />
+          <input type="password" placeholder="Password" onChange={e => setPassword(e.target.value)} />
+          <button onClick={login}>Login</button>
+        </div>
+      ) : (
+        <div>
+          <h2>Create Post</h2>
+          <input placeholder="What's on your mind?" onChange={e => setText(e.target.value)} />
+          <button onClick={createPost}>Post</button>
+          <h2>Feed</h2>
+          {posts.map(p => (
+            <div key={p._id} style={{ border: '1px solid #ccc', margin: 10, padding: 10 }}>
+              <p>{p.text}</p>
+              <button onClick={() => likePost(p._id)}>❤️ {p.likes.length}</button>
+              <small>By {p.author?.username || 'User'}</small>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+export default App;
+
+# frontend/src/index.css
+body { font-family: Arial; background: #f7f7f7; }
