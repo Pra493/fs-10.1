@@ -1,0 +1,147 @@
+# === BACKEND ===
+# backend/server.js
+const express = require('express');
+const mongoose = require('mongoose');
+const cors = require('cors');
+const userRoutes = require('./routes/userRoutes');
+const postRoutes = require('./routes/postRoutes');
+const commentRoutes = require('./routes/commentRoutes');
+const app = express();
+app.use(express.json());
+app.use(cors());
+mongoose.connect('mongodb://localhost:27017/blogDB');
+app.use('/api/users', userRoutes);
+app.use('/api/posts', postRoutes);
+app.use('/api/comments', commentRoutes);
+app.listen(5000, () => console.log("Server running"));
+
+# backend/models/User.js
+const mongoose = require('mongoose');
+const userSchema = new mongoose.Schema({
+  username: String, email: String, password: String
+});
+module.exports = mongoose.model('User', userSchema);
+
+# backend/models/Post.js
+const mongoose = require('mongoose');
+const postSchema = new mongoose.Schema({
+  title: String, content: String, author: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
+});
+module.exports = mongoose.model('Post', postSchema);
+
+# backend/models/Comment.js
+const mongoose = require('mongoose');
+const commentSchema = new mongoose.Schema({
+  text: String,
+  author: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  post: { type: mongoose.Schema.Types.ObjectId, ref: 'Post' }
+});
+module.exports = mongoose.model('Comment', commentSchema);
+
+# backend/routes/userRoutes.js
+const express = require('express');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const User = require('../models/User');
+const router = express.Router();
+router.post('/register', async (req, res) => {
+  const hashed = await bcrypt.hash(req.body.password, 10);
+  const user = await User.create({ ...req.body, password: hashed });
+  res.json(user);
+});
+router.post('/login', async (req, res) => {
+  const user = await User.findOne({ email: req.body.email });
+  if (!user) return res.status(400).json({ msg: 'User not found' });
+  const valid = await bcrypt.compare(req.body.password, user.password);
+  if (!valid) return res.status(400).json({ msg: 'Wrong password' });
+  const token = jwt.sign({ id: user._id }, 'secret');
+  res.json({ token, user });
+});
+module.exports = router;
+
+# backend/routes/postRoutes.js
+const express = require('express');
+const jwt = require('jsonwebtoken');
+const Post = require('../models/Post');
+const router = express.Router();
+router.get('/', async (req, res) => res.json(await Post.find().populate('author')));
+router.post('/', async (req, res) => {
+  const user = jwt.verify(req.headers.authorization, 'secret');
+  const post = await Post.create({ ...req.body, author: user.id });
+  res.json(post);
+});
+router.put('/:id', async (req, res) => res.json(await Post.findByIdAndUpdate(req.params.id, req.body, { new: true })));
+router.delete('/:id', async (req, res) => res.json(await Post.findByIdAndDelete(req.params.id)));
+module.exports = router;
+
+# backend/routes/commentRoutes.js
+const express = require('express');
+const jwt = require('jsonwebtoken');
+const Comment = require('../models/Comment');
+const router = express.Router();
+router.get('/:postId', async (req, res) => res.json(await Comment.find({ post: req.params.postId }).populate('author')));
+router.post('/:postId', async (req, res) => {
+  const user = jwt.verify(req.headers.authorization, 'secret');
+  const comment = await Comment.create({ text: req.body.text, post: req.params.postId, author: user.id });
+  res.json(comment);
+});
+module.exports = router;
+
+# === FRONTEND ===
+# frontend/src/index.js
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import App from './App';
+import './index.css';
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+
+# frontend/src/App.js
+import React, { useState, useEffect } from 'react';
+import axios from 'axios';
+function App() {
+  const [user, setUser] = useState(null);
+  const [posts, setPosts] = useState([]);
+  const [title, setTitle] = useState(''); const [content, setContent] = useState('');
+  const [email, setEmail] = useState(''); const [password, setPassword] = useState('');
+  const fetchPosts = async () => setPosts((await axios.get('http://localhost:5000/api/posts')).data);
+  useEffect(() => { fetchPosts(); }, []);
+  const login = async () => {
+    const res = await axios.post('http://localhost:5000/api/users/login', { email, password });
+    setUser(res.data);
+  };
+  const addPost = async () => {
+    await axios.post('http://localhost:5000/api/posts', { title, content }, { headers: { Authorization: user.token } });
+    fetchPosts();
+  };
+  return (
+    <div style={{ padding: 20 }}>
+      {!user ? (
+        <div>
+          <h2>Login</h2>
+          <input placeholder="Email" onChange={e => setEmail(e.target.value)} />
+          <input type="password" placeholder="Password" onChange={e => setPassword(e.target.value)} />
+          <button onClick={login}>Login</button>
+        </div>
+      ) : (
+        <div>
+          <h2>Create Post</h2>
+          <input placeholder="Title" onChange={e => setTitle(e.target.value)} />
+          <textarea placeholder="Content" onChange={e => setContent(e.target.value)} />
+          <button onClick={addPost}>Post</button>
+          <h2>All Posts</h2>
+          {posts.map(p => (
+            <div key={p._id} style={{ border: '1px solid #ccc', margin: 10, padding: 10 }}>
+              <h3>{p.title}</h3>
+              <p>{p.content}</p>
+              <small>By {p.author?.username || 'Unknown'}</small>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+export default App;
+
+# frontend/src/index.css
+body { font-family: Arial; background: #fafafa; }
