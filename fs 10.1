@@ -1,0 +1,202 @@
+# === BACKEND ===
+# backend/server.js
+const express = require('express');
+const mongoose = require('mongoose');
+const cors = require('cors');
+const todoRoutes = require('./routes/todoRoutes');
+
+const app = express();
+app.use(express.json());
+app.use(cors());
+
+// MongoDB connection
+mongoose.connect('mongodb://localhost:27017/todoDB', {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+}).then(() => console.log("✅ MongoDB Connected"))
+  .catch(err => console.log("❌ MongoDB Error:", err));
+
+app.use('/api/todos', todoRoutes);
+
+const PORT = 5000;
+app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+
+
+# backend/models/Todo.js
+const mongoose = require('mongoose');
+
+const todoSchema = new mongoose.Schema({
+  text: { type: String, required: true },
+  completed: { type: Boolean, default: false }
+});
+
+module.exports = mongoose.model('Todo', todoSchema);
+
+
+# backend/routes/todoRoutes.js
+const express = require('express');
+const router = express.Router();
+const Todo = require('../models/Todo');
+
+// Create Todo
+router.post('/', async (req, res) => {
+  try {
+    const newTodo = new Todo({ text: req.body.text });
+    const savedTodo = await newTodo.save();
+    res.json(savedTodo);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// Read Todos
+router.get('/', async (req, res) => {
+  try {
+    const todos = await Todo.find();
+    res.json(todos);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// Update Todo
+router.put('/:id', async (req, res) => {
+  try {
+    const updatedTodo = await Todo.findByIdAndUpdate(
+      req.params.id,
+      { text: req.body.text, completed: req.body.completed },
+      { new: true }
+    );
+    res.json(updatedTodo);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// Delete Todo
+router.delete('/:id', async (req, res) => {
+  try {
+    await Todo.findByIdAndDelete(req.params.id);
+    res.json({ message: "Todo deleted" });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+module.exports = router;
+
+
+
+# === FRONTEND ===
+# frontend/src/index.js
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import App from './App';
+import './index.css';
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
+
+
+# frontend/src/App.js
+import React, { useState, useEffect } from 'react';
+import axios from 'axios';
+import TodoForm from './components/TodoForm';
+import TodoList from './components/TodoList';
+
+function App() {
+  const [todos, setTodos] = useState([]);
+
+  useEffect(() => { fetchTodos(); }, []);
+
+  const fetchTodos = async () => {
+    const res = await axios.get('http://localhost:5000/api/todos');
+    setTodos(res.data);
+  };
+
+  const addTodo = async (text) => {
+    const res = await axios.post('http://localhost:5000/api/todos', { text });
+    setTodos([...todos, res.data]);
+  };
+
+  const toggleComplete = async (id, completed, text) => {
+    const res = await axios.put(`http://localhost:5000/api/todos/${id}`, { completed: !completed, text });
+    setTodos(todos.map(todo => todo._id === id ? res.data : todo));
+  };
+
+  const deleteTodo = async (id) => {
+    await axios.delete(`http://localhost:5000/api/todos/${id}`);
+    setTodos(todos.filter(todo => todo._id !== id));
+  };
+
+  return (
+    <div style={{ textAlign: "center", marginTop: "50px" }}>
+      <h1>📝 Todo Application</h1>
+      <TodoForm addTodo={addTodo} />
+      <TodoList todos={todos} toggleComplete={toggleComplete} deleteTodo={deleteTodo} />
+    </div>
+  );
+}
+
+export default App;
+
+
+# frontend/src/components/TodoForm.js
+import React, { useState } from 'react';
+
+function TodoForm({ addTodo }) {
+  const [text, setText] = useState('');
+
+  const handleSubmit = e => {
+    e.preventDefault();
+    if (!text.trim()) return;
+    addTodo(text);
+    setText('');
+  };
+
+  return (
+    <form onSubmit={handleSubmit}>
+      <input
+        type="text"
+        placeholder="Enter todo..."
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        style={{ padding: "10px", width: "250px", marginRight: "10px" }}
+      />
+      <button type="submit" style={{ padding: "10px" }}>Add</button>
+    </form>
+  );
+}
+
+export default TodoForm;
+
+
+# frontend/src/components/TodoList.js
+import React from 'react';
+
+function TodoList({ todos, toggleComplete, deleteTodo }) {
+  return (
+    <ul style={{ listStyle: "none", padding: 0 }}>
+      {todos.map(todo => (
+        <li key={todo._id} style={{
+          margin: "10px 0",
+          textDecoration: todo.completed ? "line-through" : "none"
+        }}>
+          <span onClick={() => toggleComplete(todo._id, todo.completed, todo.text)} style={{ cursor: "pointer" }}>
+            {todo.text}
+          </span>
+          <button onClick={() => deleteTodo(todo._id)} style={{ marginLeft: "10px" }}>❌</button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+export default TodoList;
+
+
+# frontend/src/index.css
+body {
+  font-family: Arial, sans-serif;
+  background-color: #f7f7f7;
+}
